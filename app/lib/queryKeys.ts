@@ -111,4 +111,5 @@ export const feed = {
   explore: (params: Record<string, string | undefined> = {}) =>
     [...feed.all, 'explore', params] as const,
   bucket: (id: string) => [...feed.all, 'bucket', id] as const,
+  upcoming: () => [...feed.all, 'upcoming'] as const,
 };

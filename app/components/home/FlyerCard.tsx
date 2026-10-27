@@ -26,16 +26,25 @@ import { useRouter } from 'expo-router';
 import React from 'react';
 import { Image, Pressable, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 
+// Home's carousel width. The card keeps this shape (164 x 236) at any width, so
+// the See all grid can size it to a column and get the same card.
 export const FLYER_CARD_WIDTH = 164;
-const FLYER_CARD_HEIGHT = 236;
+const FLYER_CARD_ASPECT = 236 / 164;
 
 interface FlyerCardProps {
   item: ApiEvent;
   isSaved: boolean;
   onToggleSave: (eventId: number) => void;
+  /** Card width; the height follows from the card's fixed proportions. */
+  width?: number;
 }
 
-export default function FlyerCard({ item, isSaved, onToggleSave }: FlyerCardProps) {
+export default function FlyerCard({
+  item,
+  isSaved,
+  onToggleSave,
+  width = FLYER_CARD_WIDTH,
+}: FlyerCardProps) {
   const colors = useThemeColors();
   const router = useRouter();
 
@@ -52,8 +61,8 @@ export default function FlyerCard({ item, isSaved, onToggleSave }: FlyerCardProp
       accessibilityLabel={when ? `${item.title}, ${when}` : item.title}
       onPress={() => router.push(`/event/${item.id}`)}
       style={{
-        width: FLYER_CARD_WIDTH,
-        height: FLYER_CARD_HEIGHT,
+        width,
+        height: Math.round(width * FLYER_CARD_ASPECT),
         borderRadius: 16,
         overflow: 'hidden',
         backgroundColor: colors.placeholder,

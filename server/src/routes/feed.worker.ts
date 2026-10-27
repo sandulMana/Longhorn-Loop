@@ -253,24 +253,25 @@ async function loadUserInterest(db: D1Database, userId: number | null): Promise<
   return { tags, bucketIds };
 }
 
-// GET /feed/home: Upcoming + one ranked carousel per user-selected bucket.
-feedRoutes.get('/home', async (c) => {
-  const auth = await getAuthUser(c.req.header('Authorization'), c.env.JWT_SECRET);
-  const userId = auth ? await getUserId(c.env.DB, auth.email) : null;
-
-  const [candidates, interest] = await Promise.all([
-    loadCandidates(c.env.DB, userId),
-    loadUserInterest(c.env.DB, userId),
-  ]);
-  const nowMs = Date.now();
-
-  // "Upcoming" is the soonest events from a user's recommendations
-  //
-  // An event qualifies here when it matches
-  // at least one of the user's selected tags or selected taxonomy buckets.
-  // Once an event is in that personalized recommendation pool, chronology wins:
-  // show the 10 that start soonest.
-
+/**
+ * "Upcoming": the soonest events from a user's recommendations.
+ *
+ * An event qualifies when it matches at least one of the user's selected tags or
+ * selected taxonomy buckets. Once an event is in that personalized pool,
+ * chronology wins: show the ones that start soonest. With no personalized match
+ * at all (a signed-out caller, or a user whose picks match nothing) the pool is
+ * the general ranking instead, so the section is never empty for lack of picks.
+ *
+ * One function for both GET /feed/home (the carousel, a handful) and
+ * GET /feed/upcoming (the See all page, many) so the page is a true superset of
+ * the row: the same events in the same order, just further down the list.
+ */
+function upcomingEvents(
+  candidates: FeedEvent[],
+  interest: UserInterest,
+  nowMs: number,
+  limit: number,
+): FeedEvent[] {
   const personalizedRecommendations = candidates.filter((event) => {
     const tagMatch = event.scoredTags.some((tag) => interest.tags.has(tag.tag));
     const bucketMatch = event.bucketIds.some((bucketId) => interest.bucketIds.has(bucketId));
@@ -282,7 +283,7 @@ feedRoutes.get('/home', async (c) => {
       ? personalizedRecommendations
       : rankEvents(candidates, interest, nowMs);
 
-  const upcoming = [...upcomingPool]
+  return [...upcomingPool]
     .filter((event) => {
       const startMs = new Date(event.start_datetime).getTime();
       return Number.isFinite(startMs) && startMs > nowMs;
@@ -296,7 +297,21 @@ feedRoutes.get('/home', async (c) => {
       // Deterministic tie-breaker when two events start at the same time.
       return a.id - b.id;
     })
-    .slice(0, UPCOMING_CAROUSEL_SIZE);
+    .slice(0, limit);
+}
+
+// GET /feed/home: Upcoming + one ranked carousel per user-selected bucket.
+feedRoutes.get('/home', async (c) => {
+  const auth = await getAuthUser(c.req.header('Authorization'), c.env.JWT_SECRET);
+  const userId = auth ? await getUserId(c.env.DB, auth.email) : null;
+
+  const [candidates, interest] = await Promise.all([
+    loadCandidates(c.env.DB, userId),
+    loadUserInterest(c.env.DB, userId),
+  ]);
+  const nowMs = Date.now();
+
+  const upcoming = upcomingEvents(candidates, interest, nowMs, UPCOMING_CAROUSEL_SIZE);
 
   // One carousel per bucket the user selected, ranked within the bucket.
   const carousels: { bucketId: string; label: string; events: FeedEvent[] }[] = [];
@@ -322,6 +337,21 @@ feedRoutes.get('/home', async (c) => {
       })),
     ],
   });
+});
+
+// GET /feed/upcoming: the full Upcoming list behind Home's "See all".
+feedRoutes.get('/upcoming', async (c) => {
+  const auth = await getAuthUser(c.req.header('Authorization'), c.env.JWT_SECRET);
+  const userId = auth ? await getUserId(c.env.DB, auth.email) : null;
+  const limit = Math.min(parseInt(c.req.query('limit') || '50'), MAX_CANDIDATES);
+
+  const [candidates, interest] = await Promise.all([
+    loadCandidates(c.env.DB, userId),
+    loadUserInterest(c.env.DB, userId),
+  ]);
+
+  const events = upcomingEvents(candidates, interest, Date.now(), limit);
+  return c.json({ events, total: events.length });
 });
 
 // GET /feed/explore: one ranked list across all buckets.

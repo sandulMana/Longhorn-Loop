@@ -346,16 +346,15 @@ export default function HomeScreen() {
               variant={variantFor(section, sections)}
               savedIds={savedIds}
               onToggleSave={handleToggleSave}
-              // "See all" only makes sense for bucket sections (Upcoming has no
-              // dedicated endpoint).
-              onViewAll={
-                section.bucketId
-                  ? () =>
-                      router.push({
-                        pathname: '/view-all' as any,
-                        params: { title: section.label, bucketId: section.bucketId },
-                      })
-                  : undefined
+              // Every section leads somewhere: a bucket to its ranked list,
+              // Upcoming to GET /feed/upcoming (see view-all.tsx).
+              onViewAll={() =>
+                router.push({
+                  pathname: '/view-all' as any,
+                  params: section.bucketId
+                    ? { title: section.label, bucketId: section.bucketId }
+                    : { title: section.label, section: section.key },
+                })
               }
             />
           ))

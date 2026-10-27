@@ -174,9 +174,9 @@ export default function OrgsForYouRow({ token }: { token: string | null }) {
       <SectionHeader
         eyebrow="You Might Like"
         title="Orgs For You"
-        // Explore's Orgs view is the full directory. It can't be opened
-        // pre-selected yet, so this lands on Explore.
-        onViewAll={() => router.push('/(tabs)/explore')}
+        // Explore's Orgs view is the full directory; `view=orgs` opens it there
+        // rather than on the events feed.
+        onViewAll={() => router.push({ pathname: '/(tabs)/explore', params: { view: 'orgs' } })}
         style={{ paddingHorizontal: 20, marginBottom: HEADER_GAP }}
       />
       <FlatList
