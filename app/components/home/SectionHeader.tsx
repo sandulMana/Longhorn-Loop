@@ -71,8 +71,20 @@ export default function SectionHeader({ eyebrow, title, onViewAll, style }: Sect
           accessibilityRole="button"
           accessibilityLabel={`See all ${title}`}
           onPress={onViewAll}
-          hitSlop={8}
-          style={{ flexDirection: 'row', alignItems: 'center', gap: 2, paddingBottom: 2 }}
+          // The glyph and label stay small; the TOUCHABLE area is what grows. The
+          // control is 20pt tall by its own layout, and 12pt of slop above and
+          // below brings it to 44pt (LOOP-283: "too small to hit"). hitSlop
+          // extends the touch area without moving anything on screen, so the
+          // header's spacing is exactly what it was. Horizontally the label is
+          // already wider than 44pt; the slop there is for forgiveness.
+          hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}
+          style={{
+            flexDirection: 'row',
+            alignItems: 'center',
+            gap: 2,
+            minHeight: 20,
+            paddingBottom: 2,
+          }}
         >
           <Text style={{ fontFamily: 'Roboto-Flex-Medium', fontSize: 14, color: colors.brand }}>
             See all

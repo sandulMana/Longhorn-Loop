@@ -180,7 +180,16 @@ export default function HomeScreen() {
 
   const firstName = data.firstName || 'User';
   const greeting = getGreeting();
-  const sections = feedQuery.data?.sections ?? [];
+  const feedSections = feedQuery.data?.sections ?? [];
+  // Personalized rows first (the user's own buckets), Upcoming last. The server
+  // sends Upcoming first; it is reordered here rather than there so it works
+  // against whichever Worker version the app is pointed at. Order within each
+  // group is the server's, and the flyer/compact alternation counts only the
+  // bucket rows, so moving Upcoming doesn't change which bucket gets which card.
+  const sections = [
+    ...feedSections.filter((s) => s.bucketId),
+    ...feedSections.filter((s) => !s.bucketId),
+  ];
   const spotlightEvents = sections.find((s) => s.key === 'upcoming')?.events.slice(0, 3) ?? [];
 
   return (
