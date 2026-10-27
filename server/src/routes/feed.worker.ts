@@ -74,6 +74,7 @@ type FeedEvent = Record<string, unknown> &
     is_rsvped: boolean;
     has_seen: boolean;
     org_profile_picture: string | null;
+    org_verified: boolean;
   };
 
 /**
@@ -106,7 +107,7 @@ async function loadCandidates(db: D1Database, userId: number | null): Promise<Fe
 
   const rows = await db
     .prepare(
-      `SELECT e.*, o.profile_picture as org_profile_picture
+      `SELECT e.*, o.profile_picture as org_profile_picture, o.verified AS org_verified
        FROM events e
        LEFT JOIN organizations o ON e.host_organization_id = o.id
        WHERE e.status = 'active'
@@ -199,6 +200,9 @@ async function loadCandidates(db: D1Database, userId: number | null): Promise<Fe
       is_rsvped: rsvpSet.has(id),
       has_seen: viewedSet.has(id),
       org_profile_picture: (e.org_profile_picture as string | null) ?? null,
+      // 0/1 in the row, a boolean on the wire — for the "Posted by ✓" mark on
+      // Home's cards. NULL (scraped event, no org row) reads as not verified.
+      org_verified: Number(e.org_verified) === 1,
     };
   });
 

@@ -255,6 +255,9 @@ interface OrgSearchCursor {
 //   category           one of ORG_CATEGORIES; repeatable
 //                      (?category=A&category=B) or comma-separated.
 //   hasUpcomingEvents  'true' -- only orgs with a future, active event.
+//   excludeFollowed    'true' -- leave out orgs the caller already follows, for
+//                      surfaces that offer a Follow button (Home's "Orgs For
+//                      You"), where a row already saying "Following" is noise.
 //   sort               trending (default) | newest | az
 //   cursor             opaque; pass back a previous response's nextCursor.
 //   limit              page size, default ORG_SEARCH_LIMIT, max ORG_SEARCH_MAX_LIMIT.
@@ -285,6 +288,12 @@ orgRoutes.get('/search', async (c) => {
   const isTruthyFlag = (v: string | undefined) => v === 'true' || v === '1';
   const verifiedOnly = isTruthyFlag(c.req.query('verified'));
   const hasUpcomingEvents = isTruthyFlag(c.req.query('hasUpcomingEvents'));
+  const excludeFollowed = isTruthyFlag(c.req.query('excludeFollowed'));
+
+  // Who is asking, for is_following / excludeFollowed. A valid token for a user
+  // row that no longer exists gets -1, which matches no follower row, rather
+  // than an error: this is a read, and "follows nothing" is a true answer.
+  const viewerId = (await getUserId(c.env.DB, auth.email)) ?? -1;
 
   const rawCategories = [
     ...new Set(
@@ -354,6 +363,12 @@ orgRoutes.get('/search', async (c) => {
                   AND e.start_datetime > datetime('now'))`,
     );
   }
+  if (excludeFollowed) {
+    whereParts.push(
+      `NOT EXISTS (SELECT 1 FROM org_followers fx WHERE fx.org_id = o.id AND fx.user_id = ?)`,
+    );
+    whereBinds.push(viewerId);
+  }
 
   const keyset = cursorValues ? buildKeysetCondition(keys, cursorValues) : null;
 
@@ -367,7 +382,10 @@ orgRoutes.get('/search', async (c) => {
               (SELECT COUNT(*) FROM org_members m
                 WHERE m.org_id = o.id AND m.role = 'admin') AS admin_count,
               (SELECT COUNT(*) FROM org_followers f
-                WHERE f.org_id = o.id AND f.created_at >= datetime('now', '-7 days')) AS trending_score
+                WHERE f.org_id = o.id AND f.created_at >= datetime('now', '-7 days')) AS trending_score,
+              (SELECT COUNT(*) FROM org_followers f2 WHERE f2.org_id = o.id) AS follower_count,
+              EXISTS (SELECT 1 FROM org_followers f3
+                       WHERE f3.org_id = o.id AND f3.user_id = ?) AS is_following
               ${selectExtra.join('')}
          FROM organizations o
          ${whereParts.length > 0 ? `WHERE ${whereParts.join(' AND ')}` : ''}
@@ -377,7 +395,9 @@ orgRoutes.get('/search', async (c) => {
      ORDER BY ${keys.map((k) => `${k.expr} ${k.dir}`).join(', ')}
      LIMIT ?`,
   )
-    .bind(...selectBinds, ...whereBinds, ...(keyset ? keyset.binds : []), limit + 1)
+    // viewerId first: its placeholder sits in the SELECT list ahead of
+    // selectExtra's, which is ahead of the WHERE clause's.
+    .bind(viewerId, ...selectBinds, ...whereBinds, ...(keyset ? keyset.binds : []), limit + 1)
     .all();
 
   // Fetching one extra row is the standard way to know whether a next page
@@ -405,6 +425,10 @@ orgRoutes.get('/search', async (c) => {
         name: o.name,
         profile_picture: o.profile_picture,
         category: o.category,
+        // For "category · 1.2k" on cards that also carry a Follow button.
+        // Total followers, not the 7-day trending score used for ranking.
+        follower_count: Number(o.follower_count ?? 0),
+        is_following: Number(o.is_following) === 1,
         // Returned so org search can preview and, once LOOP-257 lands, match
         // on it. NULL on every row until an admin writes one via PATCH.
         bio: o.bio,
