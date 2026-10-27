@@ -14,6 +14,7 @@
 // what the server last said. A followed card stays in the row until the next
 // refetch rather than vanishing under the user's thumb.
 
+import { HEADER_GAP, SECTION_GAP } from '@/app/components/home/layout';
 import SectionHeader from '@/app/components/home/SectionHeader';
 import { api } from '@/app/lib/api';
 import { org as orgKeys } from '@/app/lib/queryKeys';
@@ -169,14 +170,14 @@ export default function OrgsForYouRow({ token }: { token: string | null }) {
   if (orgs.length === 0) return null;
 
   return (
-    <View style={{ marginBottom: 28 }}>
+    <View style={{ marginBottom: SECTION_GAP }}>
       <SectionHeader
         eyebrow="You Might Like"
         title="Orgs For You"
         // Explore's Orgs view is the full directory. It can't be opened
         // pre-selected yet, so this lands on Explore.
         onViewAll={() => router.push('/(tabs)/explore')}
-        style={{ paddingHorizontal: 20, marginBottom: 12 }}
+        style={{ paddingHorizontal: 20, marginBottom: HEADER_GAP }}
       />
       <FlatList
         data={orgs}

@@ -1,10 +1,13 @@
 import BellFilledIcon from '@/assets/images/bell-filled.svg';
 import BellIcon from '@/assets/images/bell.svg';
-import HookemIcon from '@/assets/images/hookem.svg';
+import MoonIcon from '@/assets/images/moon.svg';
+import SunIcon from '@/assets/images/sun.svg';
+import SunriseIcon from '@/assets/images/sunrise.svg';
 import { ApiEvent } from '@/app/components/EventCard';
 import CompactEventRow from '@/app/components/home/CompactEventRow';
 import FlyerCard from '@/app/components/home/FlyerCard';
 import EventPostedModal from '@/app/components/EventPostedModal';
+import { HEADER_GAP, SECTION_GAP } from '@/app/components/home/layout';
 import OrgsForYouRow from '@/app/components/home/OrgsForYouRow';
 import SectionHeader from '@/app/components/home/SectionHeader';
 import SpotlightMosaic from '@/app/components/home/SpotlightMosaic';
@@ -26,11 +29,15 @@ import {
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useThemeColors } from '@/app/lib/themeColors';
 
-function getGreeting(): string {
+// Time-of-day greeting and the glyph that goes with it. Read from the DEVICE
+// clock on purpose: "good morning" is about where the person is, so the server's
+// timezone (UTC on Workers) would greet a student in Austin with "good evening"
+// all afternoon.
+function getGreeting(): { text: string; Icon: typeof SunIcon } {
   const hour = new Date().getHours();
-  if (hour < 12) return 'Good morning,';
-  if (hour < 17) return 'Good afternoon,';
-  return 'Good evening,';
+  if (hour < 12) return { text: 'Good morning,', Icon: SunriseIcon };
+  if (hour < 17) return { text: 'Good afternoon,', Icon: SunIcon };
+  return { text: 'Good evening,', Icon: MoonIcon };
 }
 
 // Shape of the /feed/home response. Each section is a carousel; the first is
@@ -73,14 +80,14 @@ function CarouselSection({
   if (section.events.length === 0) return null;
 
   return (
-    <View style={{ marginBottom: 28 }}>
+    <View style={{ marginBottom: SECTION_GAP }}>
       <SectionHeader
         // Bucket rows are there because the user picked that interest. Upcoming
         // is not a pick, so it has no reason to give and carries no eyebrow.
         eyebrow={section.bucketId ? 'Because You Picked' : undefined}
         title={section.label}
         onViewAll={onViewAll}
-        style={{ paddingHorizontal: 20, marginBottom: 12 }}
+        style={{ paddingHorizontal: 20, marginBottom: HEADER_GAP }}
       />
       {variant === 'compact' ? (
         <View style={{ paddingHorizontal: 20, gap: 10 }}>
@@ -172,6 +179,7 @@ export default function HomeScreen() {
   ).length;
 
   const firstName = data.firstName || 'User';
+  const greeting = getGreeting();
   const sections = feedQuery.data?.sections ?? [];
   const spotlightEvents = sections.find((s) => s.key === 'upcoming')?.events.slice(0, 3) ?? [];
 
@@ -194,27 +202,57 @@ export default function HomeScreen() {
           style={{
             paddingHorizontal: 20,
             paddingTop: 90,
-            paddingBottom: 16,
+            paddingBottom: 24,
             flexDirection: 'row',
             justifyContent: 'space-between',
             alignItems: 'center',
           }}
         >
           <View>
-            <Text style={{ fontSize: 16, fontWeight: '400', color: colors.inkMuted }}>
-              {getGreeting()}
-            </Text>
-            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, marginTop: 4 }}>
-              <Text style={{ fontSize: 32, fontWeight: '700', color: colors.ink }}>
-                {firstName}
+            {/* Orange caps eyebrow with its time-of-day glyph, then the name large —
+                as in the redesign. (The Hook 'em hand that used to sit after the
+                name is not in the new frame and has been dropped.) */}
+            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+              <greeting.Icon width={16} height={16} color={colors.brand} />
+              <Text
+                style={{
+                  fontFamily: 'Roboto-Flex-SemiBold',
+                  fontSize: 13,
+                  letterSpacing: 0.4,
+                  color: colors.brand,
+                }}
+              >
+                {greeting.text.toUpperCase()}
               </Text>
-              <HookemIcon width={31} height={31} color={colors.ink} />
             </View>
+            <Text
+              style={{
+                fontFamily: 'Roboto-Flex-Bold',
+                fontSize: 32,
+                lineHeight: 38,
+                color: colors.ink,
+                marginTop: 2,
+              }}
+            >
+              {firstName}
+            </Text>
           </View>
 
           {/* Bell */}
           <TouchableOpacity
-            style={{ position: 'relative', padding: 4 }}
+            // A round white button, as in the redesign. The badge below hangs off
+            // its top-right edge, so this must not clip its children.
+            style={{
+              position: 'relative',
+              width: 44,
+              height: 44,
+              borderRadius: 22,
+              alignItems: 'center',
+              justifyContent: 'center',
+              backgroundColor: colors.surface,
+              borderWidth: 1,
+              borderColor: colors.borderSoft,
+            }}
             onPress={() => router.push('/notifications')}
             accessibilityRole="button"
             accessibilityLabel={
@@ -241,8 +279,8 @@ export default function HomeScreen() {
               <View
                 style={{
                   position: 'absolute',
-                  top: 0,
-                  right: 0,
+                  top: -2,
+                  right: -2,
                   // Brand, not destructive. An unread notification is not an
                   // error, and red on this header read as an alert state — bug
                   // bash: "make notification symbol color burnt orange instead
@@ -271,16 +309,6 @@ export default function HomeScreen() {
           </TouchableOpacity>
         </View>
 
-        {/* Divider */}
-        <View
-          style={{
-            height: 1,
-            backgroundColor: colors.divider,
-            marginHorizontal: 20,
-            marginBottom: 24,
-          }}
-        />
-
         {/* Spotlight: a fixed three-slot mosaic (tall card + two stacked).
 
             PLACEHOLDER SOURCE: the first three Upcoming events. Which events
@@ -290,11 +318,11 @@ export default function HomeScreen() {
             appear in the Upcoming carousel below. Renders nothing with fewer
             than three events. */}
         {spotlightEvents.length >= 3 ? (
-          <View style={{ paddingHorizontal: 20, marginBottom: 28 }}>
+          <View style={{ paddingHorizontal: 20, marginBottom: SECTION_GAP }}>
             <SectionHeader
               eyebrow="Your Top Picks"
               title="Spotlight"
-              style={{ marginBottom: 12 }}
+              style={{ marginBottom: HEADER_GAP }}
             />
             <SpotlightMosaic events={spotlightEvents} />
           </View>
