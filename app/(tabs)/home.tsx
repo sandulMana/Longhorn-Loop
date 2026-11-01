@@ -356,7 +356,7 @@ export default function HomeScreen() {
               savedIds={savedIds}
               onToggleSave={handleToggleSave}
               // Every section leads somewhere: a bucket to its ranked list,
-              // Upcoming to GET /feed/upcoming (see view-all.tsx).
+              // Upcoming to the same events from the home feed (see view-all.tsx).
               onViewAll={() =>
                 router.push({
                   pathname: '/view-all' as any,

@@ -91,8 +91,13 @@ export const org = {
    * `{ pages, pageParams }`. Sharing the key would let each screen read the
    * other's shape — a crash on whichever mounted second, and a confusing one,
    * because the URL and the payload would both look right.
+   *
+   * Keyed on the whole request string (query, sort, filters — LOOP-293), not
+   * just the query: a keyset cursor is only valid for the sort and filters it
+   * came from, so two of them sharing a cache entry would feed one's cursor to
+   * the other and get INVALID_CURSOR back.
    */
-  directory: (query: string) => [...org.all, 'directory', query] as const,
+  directory: (request: string) => [...org.all, 'directory', request] as const,
   // Home's "Orgs For You" row. Under org.all so anything that invalidates the
   // org tree (a follow from a profile, say) refreshes it too.
   forYou: () => [...org.all, 'for-you'] as const,
@@ -111,5 +116,4 @@ export const feed = {
   explore: (params: Record<string, string | undefined> = {}) =>
     [...feed.all, 'explore', params] as const,
   bucket: (id: string) => [...feed.all, 'bucket', id] as const,
-  upcoming: () => [...feed.all, 'upcoming'] as const,
 };

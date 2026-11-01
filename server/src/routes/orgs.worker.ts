@@ -183,10 +183,22 @@ type SortKey = { expr: string; dir: 'ASC' | 'DESC'; field: string };
  * ranking this replaces -- into every sort's chain right after its primary
  * criterion. For `trending`, that block's trailing "name ASC" is already the
  * exact tie-break the spec defines for ties with no search running, so
- * nothing further is added before the final `id`. For `az`, name is already
- * the primary key, so only the tier/length prefix (not another name column)
- * is spliced in. `id ASC` is the final tie-breaker everywhere, searching or
- * not, because it is the only column guaranteed unique.
+ * nothing further is added before the final `id`. `id ASC` is the final
+ * tie-breaker everywhere, searching or not, because it is the only column
+ * guaranteed unique.
+ *
+ * `az` is the one exception, and it is deliberate (LOOP-293). Names are
+ * effectively unique, so "relevance only when the name ties" meant relevance
+ * never applied at all: typing "Rowing" put "Longhorn Rowing Society" above
+ * the org actually called Rowing. Explore searches with sort=az, so for az the
+ * match tier comes FIRST and alphabetical orders within each tier -- exact
+ * match, then prefix matches A-Z, then contains-matches A-Z.
+ *
+ * `newest` reads created_at, not updated_at. Every event scrape (ingest.ts
+ * upsertOrganizations) and the daily directory scrape bump updated_at on every
+ * org they touch, so "most recently updated" was really "most recently
+ * scraped" and the New Orgs chip would have shown a near-random slice of the
+ * directory. created_at is set once, when Loop first sees the org.
  */
 function sortKeysFor(sort: OrgSortOption, searching: boolean): SortKey[] {
   const id: SortKey = { expr: 'id', dir: 'ASC', field: 'id' };
@@ -198,11 +210,11 @@ function sortKeysFor(sort: OrgSortOption, searching: boolean): SortKey[] {
   ];
 
   if (sort === 'newest') {
-    const updatedAt: SortKey = { expr: 'updated_at', dir: 'DESC', field: 'updated_at' };
-    return searching ? [updatedAt, ...relevance, id] : [updatedAt, id];
+    const createdAt: SortKey = { expr: 'created_at', dir: 'DESC', field: 'created_at' };
+    return searching ? [createdAt, ...relevance, id] : [createdAt, id];
   }
   if (sort === 'az') {
-    return searching ? [name, relevance[0], relevance[1], id] : [name, id];
+    return searching ? [relevance[0], name, id] : [name, id];
   }
   const trending: SortKey = { expr: 'trending_score', dir: 'DESC', field: 'trending_score' };
   return searching ? [trending, ...relevance, id] : [trending, name, id];
@@ -247,17 +259,14 @@ interface OrgSearchCursor {
 // endpoint searches what we have; it is not a HornsLink directory lookup.
 //
 // Query params, all optional:
-//   q                  keyword search on org name. Omitted (or empty) means
-//                      "no search" -- filters and sort still apply to the
-//                      whole directory. See ORG_SEARCH_MIN_QUERY below for
-//                      the one case that still short-circuits to [].
+//   q                  keyword search on org name. OMITTED means "no search"
+//                      -- filters and sort still apply to the whole
+//                      directory. Present but shorter than
+//                      ORG_SEARCH_MIN_QUERY (including blank) returns [].
 //   verified           'true' -- only verified orgs.
 //   category           one of ORG_CATEGORIES; repeatable
 //                      (?category=A&category=B) or comma-separated.
 //   hasUpcomingEvents  'true' -- only orgs with a future, active event.
-//   excludeFollowed    'true' -- leave out orgs the caller already follows, for
-//                      surfaces that offer a Follow button (Home's "Orgs For
-//                      You"), where a row already saying "Following" is noise.
 //   sort               trending (default) | newest | az
 //   cursor             opaque; pass back a previous response's nextCursor.
 //   limit              page size, default ORG_SEARCH_LIMIT, max ORG_SEARCH_MAX_LIMIT.
@@ -269,14 +278,17 @@ orgRoutes.get('/search', async (c) => {
   if (!isOrgSort(rawSort)) return c.json({ error: 'INVALID_SORT', valid: ORG_SORT_OPTIONS }, 400);
   const sort: OrgSortOption = rawSort;
 
-  const q = (c.req.query('q') ?? '').trim();
-  const searching = q.length > 0 && q.length >= ORG_SEARCH_MIN_QUERY;
+  const rawQ = c.req.query('q');
+  const q = (rawQ ?? '').trim();
+  const searching = q.length >= ORG_SEARCH_MIN_QUERY;
 
-  // A query the user is still typing (non-empty, below the minimum) returns
-  // nothing, same as pre-LOOP-264 -- but an OMITTED query is now a legitimate
-  // request for the directory (see Default Behavior), so only the former
-  // short-circuits here.
-  if (q.length > 0 && q.length < ORG_SEARCH_MIN_QUERY) {
+  // Browse mode is an OMITTED ?q=, never an empty one. A `q` that is present
+  // but blank or below the minimum is a search field someone is still typing
+  // into -- the registration form's on first paint -- and returns nothing,
+  // exactly as before LOOP-264. Only leaving the parameter off entirely (what
+  // Explore's Orgs list sends) asks for the directory, so the two callers
+  // can't drift into each other's behaviour by accident.
+  if (rawQ !== undefined && !searching) {
     return c.json({ query: q, sort, organizations: [], nextCursor: null });
   }
 
@@ -288,12 +300,6 @@ orgRoutes.get('/search', async (c) => {
   const isTruthyFlag = (v: string | undefined) => v === 'true' || v === '1';
   const verifiedOnly = isTruthyFlag(c.req.query('verified'));
   const hasUpcomingEvents = isTruthyFlag(c.req.query('hasUpcomingEvents'));
-  const excludeFollowed = isTruthyFlag(c.req.query('excludeFollowed'));
-
-  // Who is asking, for is_following / excludeFollowed. A valid token for a user
-  // row that no longer exists gets -1, which matches no follower row, rather
-  // than an error: this is a read, and "follows nothing" is a true answer.
-  const viewerId = (await getUserId(c.env.DB, auth.email)) ?? -1;
 
   const rawCategories = [
     ...new Set(
@@ -363,12 +369,6 @@ orgRoutes.get('/search', async (c) => {
                   AND e.start_datetime > datetime('now'))`,
     );
   }
-  if (excludeFollowed) {
-    whereParts.push(
-      `NOT EXISTS (SELECT 1 FROM org_followers fx WHERE fx.org_id = o.id AND fx.user_id = ?)`,
-    );
-    whereBinds.push(viewerId);
-  }
 
   const keyset = cursorValues ? buildKeysetCondition(keys, cursorValues) : null;
 
@@ -378,14 +378,13 @@ orgRoutes.get('/search', async (c) => {
   const { results } = await c.env.DB.prepare(
     `WITH scored AS (
        SELECT o.id, o.name, o.profile_picture, o.category, o.verified,
-              o.verification_status, o.bio, o.updated_at,
+              o.verification_status, o.bio, o.created_at,
+              (SELECT COUNT(*) FROM org_followers f
+                WHERE f.org_id = o.id) AS follower_count,
               (SELECT COUNT(*) FROM org_members m
                 WHERE m.org_id = o.id AND m.role = 'admin') AS admin_count,
               (SELECT COUNT(*) FROM org_followers f
-                WHERE f.org_id = o.id AND f.created_at >= datetime('now', '-7 days')) AS trending_score,
-              (SELECT COUNT(*) FROM org_followers f2 WHERE f2.org_id = o.id) AS follower_count,
-              EXISTS (SELECT 1 FROM org_followers f3
-                       WHERE f3.org_id = o.id AND f3.user_id = ?) AS is_following
+                WHERE f.org_id = o.id AND f.created_at >= datetime('now', '-7 days')) AS trending_score
               ${selectExtra.join('')}
          FROM organizations o
          ${whereParts.length > 0 ? `WHERE ${whereParts.join(' AND ')}` : ''}
@@ -395,9 +394,7 @@ orgRoutes.get('/search', async (c) => {
      ORDER BY ${keys.map((k) => `${k.expr} ${k.dir}`).join(', ')}
      LIMIT ?`,
   )
-    // viewerId first: its placeholder sits in the SELECT list ahead of
-    // selectExtra's, which is ahead of the WHERE clause's.
-    .bind(viewerId, ...selectBinds, ...whereBinds, ...(keyset ? keyset.binds : []), limit + 1)
+    .bind(...selectBinds, ...whereBinds, ...(keyset ? keyset.binds : []), limit + 1)
     .all();
 
   // Fetching one extra row is the standard way to know whether a next page
@@ -425,13 +422,17 @@ orgRoutes.get('/search', async (c) => {
         name: o.name,
         profile_picture: o.profile_picture,
         category: o.category,
-        // For "category · 1.2k" on cards that also carry a Follow button.
-        // Total followers, not the 7-day trending score used for ranking.
-        follower_count: Number(o.follower_count ?? 0),
-        is_following: Number(o.is_following) === 1,
         // Returned so org search can preview and, once LOOP-257 lands, match
         // on it. NULL on every row until an admin writes one via PATCH.
         bio: o.bio,
+        // All-time, for the Explore card's meta line (LOOP-293). Distinct
+        // from trending_score, which only counts the past 7 days.
+        follower_count: Number(o.follower_count ?? 0),
+        // "Joined <Mon YYYY>" on the Explore card (LOOP-293). This is when
+        // Loop first saw the org, not when it was founded -- for scraped orgs
+        // that's the scrape that found them. Agreed with Matthew as the
+        // honest reading of "joined"; never derived from event dates.
+        created_at: o.created_at,
         verified: Number(o.verified) === 1,
         verification_status: o.verification_status,
         claim_state,

@@ -1,7 +1,7 @@
 import { ApiEvent } from '@/app/components/EventCard';
 import FlyerCard from '@/app/components/home/FlyerCard';
 import { useOnboarding } from '@/app/context/OnboardingContext';
-import { ApiError, api } from '@/app/lib/api';
+import { api } from '@/app/lib/api';
 import { events as eventsKeys, feed as feedKeys } from '@/app/lib/queryKeys';
 import { useSavedEvents } from '@/app/lib/useSavedEvents';
 import ArrowLeftIcon from '@/assets/images/arrow-left.svg';
@@ -22,26 +22,6 @@ import { useThemeColors } from '@/app/lib/themeColors';
 type EventsListResponse = { events: ApiEvent[] };
 type FeedHomeSections = { sections: { key: string; events: ApiEvent[] }[] };
 
-/**
- * Upcoming's full list from GET /feed/upcoming.
- *
- * If the server answers 404 it has not been updated with that endpoint yet — and
- * the app talks to the DEPLOYED Worker by default (app/config/api.ts), which
- * lags the repo until someone deploys. Rather than a page that claims there are
- * no events, fall back to the Upcoming row Home already gets from /feed/home:
- * the same events and order, just the row's handful instead of the full list.
- * Any other failure is a real failure and is rethrown for the error state.
- */
-async function fetchUpcoming(token: string | null): Promise<EventsListResponse> {
-  try {
-    return await api.get<EventsListResponse>('/feed/upcoming?limit=50', { token });
-  } catch (err) {
-    if (!(err instanceof ApiError) || err.status !== 404) throw err;
-    const home = await api.get<FeedHomeSections>('/feed/home', { token });
-    return { events: home.sections.find((s) => s.key === 'upcoming')?.events ?? [] };
-  }
-}
-
 // Page inset and the gap between the two columns.
 const GUTTER = 20;
 const COLUMN_GAP = 12;
@@ -53,9 +33,10 @@ export default function ViewAllScreen() {
   // Home carousels pass `bucketId` (ranked feed). A legacy `search` param is
   // still honored for any caller building a raw /events query.
   //
-  // `section=upcoming` is Home's Upcoming row, which is not a bucket and has its
-  // own endpoint (GET /feed/upcoming) — the same events in the same order as the
-  // row, further down the list.
+  // `section=upcoming` is Home's Upcoming row, which is not a bucket and has no
+  // endpoint of its own. It reads the Upcoming section out of GET /feed/home —
+  // the same request, and the same cache entry, Home already made — so it shows
+  // exactly the events in the row (up to 10), not a longer list.
   const { title, bucketId, section, search } = useLocalSearchParams<{
     title: string;
     bucketId?: string;
@@ -67,21 +48,33 @@ export default function ViewAllScreen() {
   const token = data.token || null;
   const { savedIds, toggleSave: handleToggleSave } = useSavedEvents(token);
 
-  const eventsQuery = useQuery({
-    queryKey: upcoming
-      ? feedKeys.upcoming()
-      : bucketId
-        ? feedKeys.bucket(bucketId)
-        : eventsKeys.list({ filter: `view-all-${search}` }),
-    queryFn: () =>
-      upcoming
-        ? fetchUpcoming(token)
-        : bucketId
-          ? api.get<EventsListResponse>(`/feed/bucket/${bucketId}?limit=50`, { token })
-          : api.get<EventsListResponse>(`/events?${search}&limit=50`, { token }),
+  // Upcoming: Home's feed, shared with Home (same key, same fetch), narrowed to
+  // the Upcoming section. `select` does the narrowing so the cached value stays
+  // the whole response Home expects.
+  const upcomingQuery = useQuery({
+    queryKey: feedKeys.home(),
+    queryFn: () => api.get<FeedHomeSections>('/feed/home', { token }),
+    select: (home): EventsListResponse => ({
+      events: home.sections.find((s) => s.key === 'upcoming')?.events ?? [],
+    }),
+    enabled: upcoming,
     staleTime: 30_000,
   });
 
+  // Everything else: one bucket's ranked list, or a raw /events query.
+  const listQuery = useQuery({
+    queryKey: bucketId
+      ? feedKeys.bucket(bucketId)
+      : eventsKeys.list({ filter: `view-all-${search}` }),
+    queryFn: () =>
+      bucketId
+        ? api.get<EventsListResponse>(`/feed/bucket/${bucketId}?limit=50`, { token })
+        : api.get<EventsListResponse>(`/events?${search}&limit=50`, { token }),
+    enabled: !upcoming,
+    staleTime: 30_000,
+  });
+
+  const eventsQuery = upcoming ? upcomingQuery : listQuery;
   const events = eventsQuery.data?.events ?? [];
 
   // Two flyer cards across, the same card Home's rows use. Sized from the screen

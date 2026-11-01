@@ -2,11 +2,16 @@
 // button, so following one is a single tap without leaving Home.
 //
 // WHERE THE ORGS COME FROM. There is no recommender: this is GET /orgs/search
-// sorted by `trending` (most new followers in the last 7 days), with orgs the
-// viewer already follows left out. That is "popular right now", not "matched to
-// your interests" — the row is titled "for you" ahead of the data being able to
-// back that up. When an interest-based source exists, only `queryFn` below
-// changes.
+// sorted by `trending` (most new followers in the last 7 days). That is "popular
+// right now", not "matched to your interests" — the row is titled "for you"
+// ahead of the data being able to back that up. When an interest-based source
+// exists, only `queryFn` below changes.
+//
+// The search response says nothing about whether the viewer already follows an
+// org, and no existing endpoint lists the orgs a user follows, so an org they
+// follow can show up here still reading "Follow". Tapping it is harmless — the
+// endpoint is idempotent and the button just settles on "Following" — and the
+// server is deliberately not extended for this.
 //
 // FOLLOW ONLY, AND OPTIMISTIC. The button flips to "Following" the moment it is
 // tapped and the request settles behind it. Tapping it again does NOT unfollow:
@@ -24,7 +29,7 @@ import { org as orgKeys } from '@/app/lib/queryKeys';
 import { useThemeColors, type ThemeColors } from '@/app/lib/themeColors';
 import { useOrgFollow } from '@/app/lib/useOrgFollow';
 import FollowersIcon from '@/assets/images/followers.svg';
-import { useQuery, useQueryClient } from '@tanstack/react-query';
+import { useQuery } from '@tanstack/react-query';
 import { useRouter } from 'expo-router';
 import React, { useMemo, useState } from 'react';
 import { FlatList, Image, Pressable, StyleSheet, Text, View } from 'react-native';
@@ -35,7 +40,6 @@ interface OrgForYou {
   profile_picture: string | null;
   category: string | null;
   follower_count: number;
-  is_following: boolean;
 }
 
 interface OrgsForYouResponse {
@@ -55,41 +59,15 @@ function OrgCard({ org, token }: { org: OrgForYou; token: string | null }) {
   const colors = useThemeColors();
   const styles = useMemo(() => makeStyles(colors), [colors]);
   const router = useRouter();
-  const queryClient = useQueryClient();
 
-  // What the button shows ahead of the server. null = no write in flight, so
-  // the cached value is the truth.
-  const [optimistic, setOptimistic] = useState<boolean | null>(null);
-  const following = optimistic ?? org.is_following;
+  // Whether this card has been followed from here. Local: the search response
+  // doesn't carry the viewer's follow state, so everything starts as "Follow".
+  const [following, setFollowing] = useState(false);
 
   const follow = useOrgFollow(org.id, token, {
-    onSuccess: ({ following: now }) => {
-      // Write the server's answer into the row's cache so the card keeps it
-      // (including its follower count) across re-renders and remounts.
-      queryClient.setQueryData<OrgsForYouResponse>(orgKeys.forYou(), (old) =>
-        old
-          ? {
-              ...old,
-              organizations: old.organizations.map((o) =>
-                o.id === org.id
-                  ? {
-                      ...o,
-                      is_following: now,
-                      follower_count: Math.max(
-                        0,
-                        o.follower_count + (now === o.is_following ? 0 : now ? 1 : -1),
-                      ),
-                    }
-                  : o,
-              ),
-            }
-          : old,
-      );
-      setOptimistic(null);
-    },
-    // Back to what the server last said. The button was the only thing that
+    // Back to "Follow" if the write failed. The button was the only thing that
     // moved, so reverting it is the whole reconciliation.
-    onError: () => setOptimistic(null),
+    onError: () => setFollowing(false),
   });
 
   // Most orgs have no category (every scraped row), so the line is often just
@@ -137,7 +115,7 @@ function OrgCard({ org, token }: { org: OrgForYou; token: string | null }) {
         disabled={follow.isPending}
         onPress={() => {
           // Always a follow, never a toggle — see the header.
-          setOptimistic(true);
+          setFollowing(true);
           follow.mutate(true);
         }}
         // Soft brand fill while unfollowed, outline once followed.
@@ -157,11 +135,8 @@ export default function OrgsForYouRow({ token }: { token: string | null }) {
   const orgsQuery = useQuery({
     queryKey: orgKeys.forYou(),
     queryFn: () =>
-      api.get<OrgsForYouResponse>(
-        `/orgs/search?sort=trending&excludeFollowed=true&limit=${ROW_SIZE}`,
-        { token },
-      ),
-    // The endpoint is auth-gated (it needs to know who to exclude).
+      api.get<OrgsForYouResponse>(`/orgs/search?sort=trending&limit=${ROW_SIZE}`, { token }),
+    // The endpoint is auth-gated.
     enabled: !!token,
     staleTime: 60_000,
   });
