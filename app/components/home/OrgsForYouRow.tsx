@@ -8,11 +8,14 @@
 // back that up. When an interest-based source exists, only `queryFn` below
 // changes.
 //
-// FOLLOWING IS OPTIMISTIC. The button flips the moment it is tapped and the
-// request settles behind it. POST/DELETE /orgs/:id/follow are idempotent, so a
-// retry or a double fire is harmless; if the write fails the button goes back to
-// what the server last said. A followed card stays in the row until the next
-// refetch rather than vanishing under the user's thumb.
+// FOLLOW ONLY, AND OPTIMISTIC. The button flips to "Following" the moment it is
+// tapped and the request settles behind it. Tapping it again does NOT unfollow:
+// this row is for discovering orgs, and the ticket's check is that a second tap
+// leaves the org followed with no error. POST /orgs/:id/follow is idempotent, so
+// the repeat is harmless. Unfollowing lives on the org's own profile page. If a
+// write fails the button goes back to what the server last said. A followed card
+// stays in the row until the next refetch rather than vanishing under the user's
+// thumb.
 
 import { HEADER_GAP, SECTION_GAP } from '@/app/components/home/layout';
 import SectionHeader from '@/app/components/home/SectionHeader';
@@ -129,13 +132,13 @@ function OrgCard({ org, token }: { org: OrgForYou; token: string | null }) {
 
       <Pressable
         accessibilityRole="button"
-        accessibilityLabel={following ? `Unfollow ${org.name}` : `Follow ${org.name}`}
+        accessibilityLabel={following ? `Following ${org.name}` : `Follow ${org.name}`}
         accessibilityState={{ selected: following, disabled: follow.isPending }}
         disabled={follow.isPending}
         onPress={() => {
-          const next = !following;
-          setOptimistic(next);
-          follow.mutate(next);
+          // Always a follow, never a toggle — see the header.
+          setOptimistic(true);
+          follow.mutate(true);
         }}
         // Soft brand fill while unfollowed, outline once followed.
         style={[styles.followButton, following ? styles.followButtonActive : null]}
